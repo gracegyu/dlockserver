@@ -7,8 +7,9 @@ import {
 import { AppController, TestController } from './app.controller';
 import { AppService } from './app.service';
 import { TestMiddleware, TestMiddleware2 } from './middleware/TestMiddleware';
+import { EventsModule } from './events/events.module';
 @Module({
-  imports: [],
+  imports: [EventsModule],
   controllers: [AppController, TestController], //TestController추가
   providers: [AppService],
 })
