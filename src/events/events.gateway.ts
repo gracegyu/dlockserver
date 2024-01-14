@@ -26,11 +26,11 @@ export class EventsGateway /* implements OnGatewayConnection, OnGatewayDisconnec
   client: Record<string, any>;
   constructor() {
     console.log('EventsGateway instance');
-    this.client = {};
   }
   @WebSocketServer()
   server: Server;
 
+  // Client가 Server에 접속하면 호출
   public handleConnection(client: any): void {
     const wsId = flakeGen();
     client['wsId'] = wsId;
@@ -38,9 +38,10 @@ export class EventsGateway /* implements OnGatewayConnection, OnGatewayDisconnec
     console.log('handleConnection', typeof client, wsId);
   }
 
+  // Client가 연결을 종료할 때 호출
   public handleDisconnect(client: any): void {
-    console.log('bye', client['id']);
-    delete this.client[client['id']];
+    const wsId = client['wsId'];
+    state.disconnected(wsId);
   }
 
   @SubscribeMessage('command')
@@ -48,16 +49,6 @@ export class EventsGateway /* implements OnGatewayConnection, OnGatewayDisconnec
     const wsId = client['wsId'];
     console.log('onCommand', wsId, data);
     this.parseMessage(wsId, client, data);
-
-    // client.send(JSON.stringify({ event: 'response', lockKey: data.lockKey }));
-
-    // for (const ws of Object.values(this.client)) {
-    //   ws.send(JSON.stringify({ event: 'response', data: 'OK' }));
-    // }
-
-    // from([1, 2, 3]).pipe(
-    //   map((item) => ({ event: 'command', data: item })),
-    // );
   }
 
   parseMessage(wsId: string, ws: any, message: object): void {
