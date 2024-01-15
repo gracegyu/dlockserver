@@ -1,4 +1,5 @@
 import {
+  Logger,
   MiddlewareConsumer,
   Module,
   NestModule,
@@ -11,6 +12,7 @@ import {
 } from './app.controller';
 import { AppService } from './app.service';
 import { TestMiddleware, TestMiddleware2 } from './middleware/TestMiddleware';
+// import { LoggerMiddleware } from './middleware/logger.middleware';
 import { EventsModule } from './events/events.module';
 @Module({
   imports: [EventsModule],
@@ -23,5 +25,6 @@ export class AppModule implements NestModule {
       .apply(TestMiddleware)
       .forRoutes({ path: 'test/middleware-test/*', method: RequestMethod.GET }); //테스트 미들웨어1
     consumer.apply(TestMiddleware2).forRoutes('test/middleware-test2'); //테스트 미들웨어2
+    // consumer.apply(LoggerMiddleware).forRoutes('*');
   }
 }
