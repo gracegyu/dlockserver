@@ -4,13 +4,17 @@ import {
   NestModule,
   RequestMethod,
 } from '@nestjs/common';
-import { AppController, TestController } from './app.controller';
+import {
+  AppController,
+  TestController,
+  InfoController,
+} from './app.controller';
 import { AppService } from './app.service';
 import { TestMiddleware, TestMiddleware2 } from './middleware/TestMiddleware';
 import { EventsModule } from './events/events.module';
 @Module({
   imports: [EventsModule],
-  controllers: [AppController, TestController], //TestController추가
+  controllers: [AppController, TestController, InfoController],
   providers: [AppService],
 })
 export class AppModule implements NestModule {

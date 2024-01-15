@@ -27,7 +27,7 @@ export const eHttpStatus = Object.freeze({
   ServiceUnavailable: 503,
 });
 
-export function getErrorMessage(errCode: any): string {
+export function getErrorMessage(errCode: number): string {
   switch (errCode) {
     case eErrorCode.SUCCESS:
       return '성공';

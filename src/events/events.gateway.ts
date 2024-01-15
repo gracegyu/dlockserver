@@ -1,11 +1,13 @@
+import { Logger } from '@nestjs/common';
 import {
+  ConnectedSocket,
   SubscribeMessage,
   WebSocketGateway,
   WebSocketServer,
   // WsResponse,
 } from '@nestjs/websockets';
-// import { from, Observable } from 'rxjs';
-// import { map } from 'rxjs/operators';
+import { Socket } from 'socket.io';
+
 import 'dotenv/config';
 import { Server } from 'ws';
 import { flakeGen } from '../common/flakeId';
@@ -23,44 +25,48 @@ console.log('server.test()', redisServer.test());
 
 @WebSocketGateway(parseInt(process.env.WSPORT) ?? 8001)
 export class EventsGateway /* implements OnGatewayConnection, OnGatewayDisconnect */ {
-  client: Record<string, any>;
+  private logger = new Logger('WebSocketGateway');
   constructor() {
+    this.logger.log(`constructor`);
     console.log('EventsGateway instance');
   }
   @WebSocketServer()
   server: Server;
 
   // Client가 Server에 접속하면 호출
-  public handleConnection(client: any): void {
-    const wsId = flakeGen();
+  public handleConnection(@ConnectedSocket() client: Socket): void {
+    const wsId: string = flakeGen();
+    this.logger.log(`handleConnection ${wsId}`);
     client['wsId'] = wsId;
     state.connected(wsId, client);
     console.log('handleConnection', typeof client, wsId);
   }
 
   // Client가 연결을 종료할 때 호출
-  public handleDisconnect(client: any): void {
-    const wsId = client['wsId'];
+  public handleDisconnect(@ConnectedSocket() client: Socket): void {
+    const wsId: string = client['wsId'];
+    this.logger.log(`handleDisconnect ${wsId}`);
     state.disconnected(wsId);
   }
 
   @SubscribeMessage('command')
-  onCommand(client: any, data: any): void {
-    const wsId = client['wsId'];
+  onCommand(client: Socket, data: object): void {
+    const wsId: string = client['wsId'];
+    this.logger.log(`onCommand ${wsId} ${data}`);
     console.log('onCommand', wsId, data);
     this.parseMessage(wsId, client, data);
   }
 
-  parseMessage(wsId: string, ws: any, message: object): void {
+  parseMessage(wsId: string, ws: Socket, message: object): void {
     console.log('parseMessage', wsId, message);
     const obj: object = message;
-    const command = obj['command'];
+    const command: string = obj['command'];
     if (!command) {
-      this.wsSendUnknownCommand(ws, 'null');
+      this.wsSendUnknownCommand(wsId, ws, 'null');
       return;
     }
     if (redisServer.serverError != null) {
-      this.wsSendServerError(ws, command);
+      this.wsSendServerError(wsId, ws, command);
       return;
     }
 
@@ -95,7 +101,7 @@ export class EventsGateway /* implements OnGatewayConnection, OnGatewayDisconnec
     }
   }
 
-  wsSend(ws: any, obj: object): void {
+  wsSend(ws: Socket, obj: object): void {
     try {
       ws.send(JSON.stringify(obj));
     } catch (error) {
@@ -103,8 +109,10 @@ export class EventsGateway /* implements OnGatewayConnection, OnGatewayDisconnec
     }
   }
 
-  wsSendUnknownCommand(ws: any, command: string): void {
-    const responseCode = eErrorCode.UNKNOWN_COMMAND;
+  wsSendUnknownCommand(wsId: string, ws: Socket, command: string): void {
+    this.logger.log(`wsSendUnknownCommand ${wsId}`);
+
+    const responseCode: number = eErrorCode.UNKNOWN_COMMAND;
 
     this.wsSend(ws, {
       type: 'response',
@@ -113,44 +121,48 @@ export class EventsGateway /* implements OnGatewayConnection, OnGatewayDisconnec
     });
   }
 
-  wsSendServerError = (ws, command) => {
-    const responseCode = eErrorCode.CANT_CONNECT_REDIS_SERVER;
+  wsSendServerError(wsId: string, ws: Socket, command: string): void {
+    this.logger.log(`wsSendServerError ${wsId} ${command}`);
+    const responseCode: number = eErrorCode.CANT_CONNECT_REDIS_SERVER;
     this.wsSend(ws, {
       type: 'response',
       command,
       responseCode: responseCode,
       message: getErrorMessage(responseCode),
     });
-  };
+  }
 
-  wsSendNowFound = (ws, command) => {
-    const responseCode = eErrorCode.CANT_FIND_LOCK;
+  wsSendNowFound(wsId: string, ws: Socket, command: string): void {
+    this.logger.log('wsSendNowFound', wsId, command);
+    const responseCode: number = eErrorCode.CANT_FIND_LOCK;
     this.wsSend(ws, {
       type: 'response',
       command,
       responseCode: responseCode,
       message: getErrorMessage(responseCode),
     });
-  };
+  }
 
-  wsSendNotOwner = (ws, command) => {
-    const responseCode = eErrorCode.ERROR_PERMISSION;
+  wsSendNotOwner(wsId: string, ws: Socket, command: string): void {
+    this.logger.log('wsSendNotOwner', wsId, command);
+    const responseCode: number = eErrorCode.ERROR_PERMISSION;
     this.wsSend(ws, {
       type: 'response',
       command,
       responseCode: responseCode,
       message: getErrorMessage(responseCode),
     });
-  };
+  }
 
-  async commandLock(wsId: string, ws: any, obj: any): Promise<void> {
+  async commandLock(wsId: string, ws: Socket, obj: object): Promise<void> {
     console.log('commandLock', obj);
-    const lockKey: string = obj.lockKey;
-    const ttl: number = obj.ttl ?? DEFAULT_TTL;
-    const retryCount: number = obj.retryCount ?? DEFAULT_RETRYCOUNT;
-    const retryDelay: number = obj.retryDelay ?? DEFAULT_RETRYDELAY;
-    const userId: string = obj.userId;
-    const userName: string = obj.userName;
+    const lockKey: string = obj['lockKey'];
+    const ttl: number = obj['ttl'] ?? DEFAULT_TTL;
+    const retryCount: number = obj['retryCount'] ?? DEFAULT_RETRYCOUNT;
+    const retryDelay: number = obj['retryDelay'] ?? DEFAULT_RETRYDELAY;
+    const userId: string = obj['userId'];
+    const userName: string = obj['userName'];
+    this.logger.log('commandLock', wsId, lockKey);
 
     const lockId: string = flakeGen();
     const timestamp: number = Date.now();
@@ -206,7 +218,7 @@ export class EventsGateway /* implements OnGatewayConnection, OnGatewayDisconnec
       return;
     } catch (err) {
       console.log('err', err);
-      const responseCode = eErrorCode.FAILED_ACQUIRE_LOCK;
+      const responseCode: number = eErrorCode.FAILED_ACQUIRE_LOCK;
       this.wsSend(ws, {
         type: 'response',
         command: 'lock',
@@ -219,12 +231,13 @@ export class EventsGateway /* implements OnGatewayConnection, OnGatewayDisconnec
     }
   }
 
-  async commandTakeLock(wsId: string, ws: any, obj: any): Promise<void> {
+  async commandTakeLock(wsId: string, ws: Socket, obj: object): Promise<void> {
     console.log('commandTakeLock', obj);
-    const lockKey: string = obj.lockKey;
-    const ttl: number = obj.ttl ?? DEFAULT_TTL;
-    const userId: string = obj.userId;
-    const userName: string = obj.userName;
+    const lockKey: string = obj['lockKey'];
+    const ttl: number = obj['ttl'] ?? DEFAULT_TTL;
+    const userId: string = obj['userId'];
+    const userName: string = obj['userName'];
+    this.logger.log('commandTakeLock', wsId, lockKey);
 
     try {
       const takeId: string = flakeGen();
@@ -236,7 +249,7 @@ export class EventsGateway /* implements OnGatewayConnection, OnGatewayDisconnec
       }, 3000);
     } catch (err) {
       console.log('err', err);
-      const responseCode = eErrorCode.FAILED_TAKELOCK;
+      const responseCode: number = eErrorCode.FAILED_TAKELOCK;
       this.wsSend(ws, {
         type: 'response',
         command: 'takelock',
@@ -250,10 +263,10 @@ export class EventsGateway /* implements OnGatewayConnection, OnGatewayDisconnec
   async takeLockWithoutAccept(lockKey: string, takeId: string): Promise<void> {
     console.log('takeLockWithoutAccept', lockKey, takeId);
     // takelock을 시도한 client를 찾는다.
-    const lockObj: any = state.getTakeLock(lockKey);
+    const lockObj: object = state.getTakeLock(lockKey);
     console.log('lockObj', lockObj);
     if (lockObj) {
-      if (lockObj.takeId == takeId) {
+      if (lockObj['takeId'] == takeId) {
         // 승인이 이루어지지 않았다. 강제로 그냥 가져온다.
         redisServer.parseAcceptAwayChannel({ lockKey: lockKey });
       }
@@ -262,38 +275,44 @@ export class EventsGateway /* implements OnGatewayConnection, OnGatewayDisconnec
     }
   }
 
-  async commandAcceptAway(wsId: string, ws: any, obj: any): Promise<void> {
+  async commandAcceptAway(
+    wsId: string,
+    ws: Socket,
+    obj: object,
+  ): Promise<void> {
     console.log('commandAcceptAway', obj);
-    const lockKey = obj.lockKey;
+    const lockKey: string = obj['lockKey'];
+    this.logger.log('commandAcceptAway', wsId, lockKey);
 
     state.unlock(wsId, lockKey);
 
-    const message = {
+    const message: object = {
       lockKey,
     };
     redisServer.server.publish('acceptwayChannel', JSON.stringify(message));
   }
 
-  async commandUnlock(wsId: string, ws: string, obj: any): Promise<void> {
+  async commandUnlock(wsId: string, ws: Socket, obj: object): Promise<void> {
     console.log('commandUnlock', obj);
-    const lockKey: string = obj.lockKey;
-    const lockId: string = obj.lockId;
-    const userId: string = obj.userId;
+    const lockKey: string = obj['lockKey'];
+    const lockId: string = obj['lockId'];
+    const userId: string = obj['userId'];
     console.log('commandUnlock', lockKey, userId);
+    this.logger.log('commandUnlock', wsId, lockKey);
 
     try {
-      const val = await redisServer.getLockKey(lockKey);
+      const val: string = await redisServer.getLockKey(lockKey);
       if (!val) {
-        this.wsSendNowFound(ws, 'unlock');
+        this.wsSendNowFound(wsId, ws, 'unlock');
         return;
       }
 
-      const obj = JSON.parse(val);
-      if (DEBUG != true && obj.lockId != lockId) {
-        this.wsSendNotOwner(ws, 'unlock');
+      const obj: object = JSON.parse(val);
+      if (DEBUG != true && obj['lockId'] != lockId) {
+        this.wsSendNotOwner(wsId, ws, 'unlock');
         return;
       } else {
-        const wsId = obj.wsId;
+        const wsId: string = obj['wsId'];
         redisServer.unlockKey(wsId, lockKey);
 
         this.wsSend(ws, {
@@ -323,24 +342,29 @@ export class EventsGateway /* implements OnGatewayConnection, OnGatewayDisconnec
     }
   }
 
-  async commandRestoreLock(wsId: string, ws: any, obj: any): Promise<void> {
+  async commandRestoreLock(
+    wsId: string,
+    ws: Socket,
+    obj: object,
+  ): Promise<void> {
     console.log('commandRestoreLock', obj);
-    const lockKey = obj.lockKey;
-    const lockId = obj.lockId;
+    const lockKey: string = obj['lockKey'];
+    const lockId: string = obj['lockId'];
+    this.logger.log('commandRestoreLock', wsId, lockKey);
 
     try {
-      const val = await redisServer.getLockKey(lockKey);
+      const val: string = await redisServer.getLockKey(lockKey);
       if (!val) {
-        this.wsSendNowFound(ws, 'restorelock');
+        this.wsSendNowFound(wsId, ws, 'restorelock');
         return;
       }
 
-      const obj = JSON.parse(val);
-      if (DEBUG != true && obj.lockId != lockId) {
-        this.wsSendNotOwner(ws, 'restorelock');
+      const obj: object = JSON.parse(val);
+      if (DEBUG != true && obj['lockId'] != lockId) {
+        this.wsSendNotOwner(wsId, ws, 'restorelock');
         return;
       } else {
-        const wsId = obj.wsId;
+        const wsId: string = obj['wsId'];
         state.lock(wsId, lockKey);
 
         this.wsSend(ws, {
@@ -370,29 +394,31 @@ export class EventsGateway /* implements OnGatewayConnection, OnGatewayDisconnec
     }
   }
 
-  async commandClearLock(wsId: string, ws: any, obj: any): Promise<void> {
+  async commandClearLock(wsId: string, ws: Socket, obj: object): Promise<void> {
     console.log('commandClearLock', obj);
-    const lockKey = obj.lockKey;
+    const lockKey: string = obj['lockKey'];
+    this.logger.log('commandClearLock', wsId, lockKey);
 
     state.lock(wsId, lockKey);
     console.log('state.listOfLock', wsId, state.listOfLock(wsId));
   }
 
-  async commandWatchLock(wsId: string, ws: any, obj: any): Promise<void> {
+  async commandWatchLock(wsId: string, ws: Socket, obj: object): Promise<void> {
     console.log('commandWatchLock', obj);
-    const lockKey = obj.lockKey;
+    const lockKey: string = obj['lockKey'];
+    this.logger.log('commandWatchLock', wsId, lockKey);
 
     try {
-      const val = await redisServer.getLockKey(lockKey);
+      const val: string = await redisServer.getLockKey(lockKey);
       console.log('getLockKey', lockKey, val);
-      const locked = val != null;
-      let result = null;
+      const locked: boolean = val != null;
+      let result: object = null;
       if (locked) {
-        const obj = JSON.parse(val);
+        const obj: object = JSON.parse(val);
         result = {
-          userId: obj.userId,
-          userName: obj.userName,
-          timestamp: obj.timestamp,
+          userId: obj['userId'],
+          userName: obj['userName'],
+          timestamp: obj['timestamp'],
         };
       }
 
@@ -426,18 +452,24 @@ export class EventsGateway /* implements OnGatewayConnection, OnGatewayDisconnec
     }
   }
 
-  async commandUnwatchLock(wsId: string, ws: any, obj: any): Promise<void> {
+  async commandUnwatchLock(
+    wsId: string,
+    ws: Socket,
+    obj: object,
+  ): Promise<void> {
     console.log('commandUnwatchLock', obj);
-    const lockKey = obj.lockKey;
+    const lockKey: string = obj['lockKey'];
+    this.logger.log('commandUnwatchLock', wsId, lockKey);
 
     try {
-      const val: any = await redisServer.getLockKey(lockKey);
-      let result = null;
+      const val: string = await redisServer.getLockKey(lockKey);
+      let result: object = null;
       if (val) {
+        const obj2: object = JSON.parse(val);
         result = {
-          userId: val.userId,
-          userName: val.userName,
-          timestamp: val.timestamp,
+          userId: obj2['userId'],
+          userName: obj2['userName'],
+          timestamp: obj2['timestamp'],
         };
       }
       this.wsSend(ws, {
@@ -467,12 +499,13 @@ export class EventsGateway /* implements OnGatewayConnection, OnGatewayDisconnec
     }
   }
 
-  async commandUnknown(wsId: string, ws: any, obj: any): Promise<void> {
+  async commandUnknown(wsId: string, ws: Socket, obj: object): Promise<void> {
     console.log('commandUnknown', obj);
-    const lockKey = obj.lockKey;
-    const command = obj.command;
+    const lockKey: string = obj['lockKey'];
+    const command: string = obj['command'];
+    this.logger.log('commandUnknown', wsId, lockKey);
 
-    const responseCode = eErrorCode.UNKNOWN_COMMAND;
+    const responseCode: number = eErrorCode.UNKNOWN_COMMAND;
 
     try {
       this.wsSend(ws, {

@@ -31,3 +31,12 @@ export class TestController {
     return 'middleware-test2 컨트롤러';
   }
 }
+
+@Controller('info')
+export class InfoController {
+  constructor(private readonly appService: AppService) {}
+  @Get()
+  getHello(): string {
+    return this.appService.getInfo();
+  }
+}

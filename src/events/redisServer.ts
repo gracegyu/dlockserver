@@ -1,28 +1,36 @@
+import { Logger } from '@nestjs/common';
 import 'dotenv/config';
+import { Socket } from 'socket.io';
 import { createCluster, createClient } from 'redis';
 import { state } from '../common/state';
 import { flakeGen } from '../common/flakeId';
+// import type { RedisClientType } from 'redis';
 import { getErrorMessage, eErrorCode } from '../common/enums';
 
 const serverURL = process.env.REDIS_SERVER_URL || 'localhost:6379';
 const serverList = process.env.REDIS_CLUSTER_LIST;
 
 class RedisServer {
+  private logger = new Logger('RedisServer');
   server: any = null;
-  serverError: any = null;
+  serverError: string = null;
   isCluster: boolean = serverList != null;
 
   constructor() {
+    this.logger.log('constructor');
     this.initialize();
   }
 
   async initialize() {
+    this.logger.log('initialize');
     await this.connectServer();
     await this.runLockListener();
   }
 
   async connectServer(): Promise<void> {
+    this.logger.log('connectServer');
     if (this.isCluster) {
+      this.logger.log('Cluster mode');
       console.log('serverList', serverList);
       const clusterList = eval(serverList);
       const rootNodes = [];
@@ -36,6 +44,7 @@ class RedisServer {
         rootNodes: rootNodes,
       });
     } else {
+      this.logger.log('not Cluster mode');
       console.log('Redis serverURL', serverURL);
       this.server = createClient({
         url: 'redis://' + serverURL,
@@ -50,6 +59,7 @@ class RedisServer {
   }
 
   async runLockListener(): Promise<void> {
+    this.logger.log('runLockListener');
     const subscriber = this.server.duplicate();
     subscriber.on('error', (err: any) => console.error(err));
     await subscriber.connect();
@@ -76,9 +86,10 @@ class RedisServer {
   }
 
   listener(message: string, channel: string): void {
+    this.logger.log('listener', message, channel);
+
     // eslint-disable-next-line @typescript-eslint/no-this-alias
     const self: any = this;
-    console.log('listener', this);
 
     console.log('lockListener:', channel, ' | ', message);
     if (channel == '__keyevent@0__:expired') {
@@ -113,8 +124,8 @@ class RedisServer {
     }
   }
 
-  parseLockChannel(obj: any): void {
-    const lockKey = obj.lockKey;
+  parseLockChannel(obj: object): void {
+    const lockKey = obj['lockKey'];
     console.log('parseLockChannel:', lockKey);
 
     const response = {
@@ -122,10 +133,10 @@ class RedisServer {
       notiCode: 'locked',
       lockKey: lockKey,
       result: {
-        wsId: obj.wsId,
-        userId: obj.userId,
-        userName: obj.userName,
-        timestamp: obj.timestamp,
+        wsId: obj['wsId'],
+        userId: obj['userId'],
+        userName: obj['userName'],
+        timestamp: obj['timestamp'],
       },
     };
 
@@ -147,9 +158,9 @@ class RedisServer {
     }
   }
 
-  parseAwayChannel(obj: any): void {
-    const lockKey = obj.lockKey;
-    const wsId = obj.wsId; // lock을 뺏어가려는 client
+  parseAwayChannel(obj: object): void {
+    const lockKey = obj['lockKey'];
+    const wsId = obj['wsId']; // lock을 뺏어가려는 client
     console.log('parseAwayChannel:', lockKey, wsId);
 
     // lock 소유자를 찾아서 awaylock noti를 보낸다.
@@ -174,14 +185,15 @@ class RedisServer {
     }
   }
 
-  parseUnlockChannel(obj: any): void {
-    const lockKey = obj.lockKey;
+  parseUnlockChannel(obj: object): void {
+    const lockKey = obj['lockKey'];
+    const wsId = obj['wsId'];
     console.log('parseUnlockChannel:', lockKey);
     const response = {
       type: 'noti',
       notiCode: 'unlocked',
-      lockKey: lockKey,
-      wsId: obj.wsId,
+      lockKey,
+      wsId,
     };
 
     console.log(
@@ -200,19 +212,19 @@ class RedisServer {
     }
   }
 
-  async parseAcceptAwayChannel(obj: any): Promise<void> {
+  async parseAcceptAwayChannel(obj: object): Promise<void> {
     console.log('parseAcceptAwayChannel:', obj);
-    const lockKey = obj.lockKey;
+    const lockKey = obj['lockKey'];
     console.log('parseAcceptAwayChannel:', lockKey);
 
     // takelock을 시도한 client를 찾는다.
     const lockObj = state.getTakeLock(lockKey);
     console.log('lockObj', lockObj);
     if (lockObj) {
-      const wsId = lockObj.wsId;
-      const ttl = parseInt(lockObj.ttl);
-      const userId = lockObj.userId;
-      const userName = lockObj.userName;
+      const wsId = lockObj['wsId'];
+      const ttl = parseInt(lockObj['ttl']);
+      const userId = lockObj['userId'];
+      const userName = lockObj['userName'];
       const ws = state.getWs(wsId);
 
       if (ws) {
@@ -266,7 +278,7 @@ class RedisServer {
     state.deleteTakeLock(lockKey);
   }
 
-  parseExpiredChannel(lockKey: any): void {
+  parseExpiredChannel(lockKey: string): void {
     console.log('parseExpiredChannel:', lockKey);
     const response = {
       type: 'noti',
@@ -291,7 +303,7 @@ class RedisServer {
     }
   }
 
-  wsSend(ws: any, obj: object): void {
+  wsSend(ws: Socket, obj: object): void {
     try {
       ws.send(JSON.stringify(obj));
     } catch (error) {
@@ -302,7 +314,7 @@ class RedisServer {
   async lockKey(
     wsId: string,
     lockKey: string,
-    ttl: any,
+    ttl: number,
     lockId: string,
     userId: string,
     userName: string,
@@ -339,6 +351,8 @@ class RedisServer {
   }
 
   async publishAwayLock(wsId: string, lockKey: string): Promise<void> {
+    this.logger.log('publishAwayLock', wsId, lockKey);
+
     const message = {
       wsId,
       lockKey,
@@ -388,6 +402,7 @@ class RedisServer {
   }
 
   async unlockKey(wsId: string, lockKey: string): Promise<void> {
+    this.logger.log('unlockKey', wsId, lockKey);
     console.log('unlockKey', wsId, lockKey);
     this.server.del(lockKey);
     const message = {
@@ -400,7 +415,8 @@ class RedisServer {
   async getLockKey(lockKey: string): Promise<string> {
     console.log('getLockKey', lockKey);
     const val = await this.server.get(lockKey);
-    console.log('val', val);
+
+    this.logger.log(`getLockKey(${lockKey}) => ${val}`);
     return val;
   }
 
