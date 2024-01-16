@@ -1,4 +1,3 @@
-import { Logger } from '@nestjs/common';
 import 'dotenv/config';
 import { Socket } from 'socket.io';
 import { createCluster, createClient } from 'redis';
@@ -6,31 +5,32 @@ import { state } from '../common/state';
 import { flakeGen } from '../common/flakeId';
 // import type { RedisClientType } from 'redis';
 import { getErrorMessage, eErrorCode } from '../common/enums';
+import { InfoLog } from '../common/logger';
 
 const serverURL = process.env.REDIS_SERVER_URL || 'localhost:6379';
 const serverList = process.env.REDIS_CLUSTER_LIST;
 
 class RedisServer {
-  private logger = new Logger('RedisServer');
   server: any = null;
   serverError: string = null;
   isCluster: boolean = serverList != null;
 
   constructor() {
-    this.logger.log('constructor');
+    InfoLog('constructor of RedisServer');
+
     this.initialize();
   }
 
   async initialize() {
-    this.logger.log('initialize');
+    InfoLog('initialize of RedisServer');
     await this.connectServer();
     await this.runLockListener();
   }
 
   async connectServer(): Promise<void> {
-    this.logger.log('connectServer');
+    InfoLog('connectServer');
     if (this.isCluster) {
-      this.logger.log('Cluster mode');
+      InfoLog('Cluster mode');
       console.log('serverList', serverList);
       const clusterList = eval(serverList);
       const rootNodes = [];
@@ -44,7 +44,7 @@ class RedisServer {
         rootNodes: rootNodes,
       });
     } else {
-      this.logger.log('not Cluster mode');
+      InfoLog('not Cluster mode');
       console.log('Redis serverURL', serverURL);
       this.server = createClient({
         url: 'redis://' + serverURL,
@@ -59,7 +59,7 @@ class RedisServer {
   }
 
   async runLockListener(): Promise<void> {
-    this.logger.log('runLockListener');
+    InfoLog('runLockListener');
     const subscriber = this.server.duplicate();
     subscriber.on('error', (err: any) => console.error(err));
     await subscriber.connect();
@@ -86,7 +86,7 @@ class RedisServer {
   }
 
   listener(message: string, channel: string): void {
-    this.logger.log('listener', message, channel);
+    InfoLog(`listener ${message}, ${channel}`);
 
     // eslint-disable-next-line @typescript-eslint/no-this-alias
     const self: any = this;
@@ -351,7 +351,7 @@ class RedisServer {
   }
 
   async publishAwayLock(wsId: string, lockKey: string): Promise<void> {
-    this.logger.log('publishAwayLock', wsId, lockKey);
+    InfoLog(`publishAwayLock ${wsId} ${lockKey}`);
 
     const message = {
       wsId,
@@ -402,7 +402,7 @@ class RedisServer {
   }
 
   async unlockKey(wsId: string, lockKey: string): Promise<void> {
-    this.logger.log('unlockKey', wsId, lockKey);
+    InfoLog(`unlockKey ${wsId} ${lockKey}`);
     console.log('unlockKey', wsId, lockKey);
     this.server.del(lockKey);
     const message = {
@@ -413,10 +413,9 @@ class RedisServer {
   }
 
   async getLockKey(lockKey: string): Promise<string> {
-    console.log('getLockKey', lockKey);
     const val = await this.server.get(lockKey);
 
-    this.logger.log(`getLockKey(${lockKey}) => ${val}`);
+    InfoLog(`getLockKey(${lockKey}) => ${val}`);
     return val;
   }
 

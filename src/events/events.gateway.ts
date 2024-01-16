@@ -1,4 +1,3 @@
-import { Logger } from '@nestjs/common';
 import {
   ConnectedSocket,
   SubscribeMessage,
@@ -14,6 +13,7 @@ import { flakeGen } from '../common/flakeId';
 import { redisServer } from './redisServer';
 import { state } from '../common/state';
 import { getErrorMessage, eErrorCode } from '../common/enums';
+import { InfoLog, ErrorLog } from '../common/logger';
 
 const DEBUG: boolean = false;
 const DEFAULT_TTL: number = 3600;
@@ -25,9 +25,8 @@ console.log('server.test()', redisServer.test());
 
 @WebSocketGateway(parseInt(process.env.WSPORT) ?? 8001)
 export class EventsGateway /* implements OnGatewayConnection, OnGatewayDisconnect */ {
-  private logger = new Logger('WebSocketGateway');
   constructor() {
-    this.logger.log(`constructor`);
+    InfoLog(`constructor`);
     console.log('EventsGateway instance');
   }
   @WebSocketServer()
@@ -36,7 +35,7 @@ export class EventsGateway /* implements OnGatewayConnection, OnGatewayDisconnec
   // Client가 Server에 접속하면 호출
   public handleConnection(@ConnectedSocket() client: Socket): void {
     const wsId: string = flakeGen();
-    this.logger.log(`handleConnection ${wsId}`);
+    InfoLog(`handleConnection ${wsId}`);
     client['wsId'] = wsId;
     state.connected(wsId, client);
     console.log('handleConnection', typeof client, wsId);
@@ -45,15 +44,14 @@ export class EventsGateway /* implements OnGatewayConnection, OnGatewayDisconnec
   // Client가 연결을 종료할 때 호출
   public handleDisconnect(@ConnectedSocket() client: Socket): void {
     const wsId: string = client['wsId'];
-    this.logger.log(`handleDisconnect ${wsId}`);
+    InfoLog(`handleDisconnect ${wsId}`);
     state.disconnected(wsId);
   }
 
   @SubscribeMessage('command')
   onCommand(client: Socket, data: object): void {
     const wsId: string = client['wsId'];
-    this.logger.log(`onCommand ${wsId} ${data}`);
-    console.log('onCommand', wsId, data);
+    InfoLog(`onCommand ${wsId} ${JSON.stringify(data)}`);
     this.parseMessage(wsId, client, data);
   }
 
@@ -110,7 +108,7 @@ export class EventsGateway /* implements OnGatewayConnection, OnGatewayDisconnec
   }
 
   wsSendUnknownCommand(wsId: string, ws: Socket, command: string): void {
-    this.logger.log(`wsSendUnknownCommand ${wsId}`);
+    ErrorLog(`wsSendUnknownCommand ${wsId}`);
 
     const responseCode: number = eErrorCode.UNKNOWN_COMMAND;
 
@@ -122,7 +120,7 @@ export class EventsGateway /* implements OnGatewayConnection, OnGatewayDisconnec
   }
 
   wsSendServerError(wsId: string, ws: Socket, command: string): void {
-    this.logger.log(`wsSendServerError ${wsId} ${command}`);
+    ErrorLog(`wsSendServerError ${wsId} ${command}`);
     const responseCode: number = eErrorCode.CANT_CONNECT_REDIS_SERVER;
     this.wsSend(ws, {
       type: 'response',
@@ -133,7 +131,8 @@ export class EventsGateway /* implements OnGatewayConnection, OnGatewayDisconnec
   }
 
   wsSendNowFound(wsId: string, ws: Socket, command: string): void {
-    this.logger.log('wsSendNowFound', wsId, command);
+    ErrorLog(`wsSendNowFound ${wsId} ${command}`);
+
     const responseCode: number = eErrorCode.CANT_FIND_LOCK;
     this.wsSend(ws, {
       type: 'response',
@@ -144,7 +143,8 @@ export class EventsGateway /* implements OnGatewayConnection, OnGatewayDisconnec
   }
 
   wsSendNotOwner(wsId: string, ws: Socket, command: string): void {
-    this.logger.log('wsSendNotOwner', wsId, command);
+    ErrorLog(`wsSendNotOwner ${wsId} ${command}`);
+
     const responseCode: number = eErrorCode.ERROR_PERMISSION;
     this.wsSend(ws, {
       type: 'response',
@@ -162,7 +162,7 @@ export class EventsGateway /* implements OnGatewayConnection, OnGatewayDisconnec
     const retryDelay: number = obj['retryDelay'] ?? DEFAULT_RETRYDELAY;
     const userId: string = obj['userId'];
     const userName: string = obj['userName'];
-    this.logger.log('commandLock', wsId, lockKey);
+    InfoLog(`commandLock ${wsId} ${lockKey}`);
 
     const lockId: string = flakeGen();
     const timestamp: number = Date.now();
@@ -237,7 +237,7 @@ export class EventsGateway /* implements OnGatewayConnection, OnGatewayDisconnec
     const ttl: number = obj['ttl'] ?? DEFAULT_TTL;
     const userId: string = obj['userId'];
     const userName: string = obj['userName'];
-    this.logger.log('commandTakeLock', wsId, lockKey);
+    InfoLog(`commandTakeLock ${wsId} ${lockKey}`);
 
     try {
       const takeId: string = flakeGen();
@@ -282,7 +282,7 @@ export class EventsGateway /* implements OnGatewayConnection, OnGatewayDisconnec
   ): Promise<void> {
     console.log('commandAcceptAway', obj);
     const lockKey: string = obj['lockKey'];
-    this.logger.log('commandAcceptAway', wsId, lockKey);
+    InfoLog(`commandAcceptAway ${wsId} ${lockKey}`);
 
     state.unlock(wsId, lockKey);
 
@@ -296,9 +296,8 @@ export class EventsGateway /* implements OnGatewayConnection, OnGatewayDisconnec
     console.log('commandUnlock', obj);
     const lockKey: string = obj['lockKey'];
     const lockId: string = obj['lockId'];
-    const userId: string = obj['userId'];
-    console.log('commandUnlock', lockKey, userId);
-    this.logger.log('commandUnlock', wsId, lockKey);
+    // const userId: string = obj['userId'];
+    InfoLog(`commandUnlock ${wsId} ${lockKey}`);
 
     try {
       const val: string = await redisServer.getLockKey(lockKey);
@@ -350,7 +349,7 @@ export class EventsGateway /* implements OnGatewayConnection, OnGatewayDisconnec
     console.log('commandRestoreLock', obj);
     const lockKey: string = obj['lockKey'];
     const lockId: string = obj['lockId'];
-    this.logger.log('commandRestoreLock', wsId, lockKey);
+    InfoLog(`commandRestoreLock ${wsId} ${lockKey}`);
 
     try {
       const val: string = await redisServer.getLockKey(lockKey);
@@ -397,7 +396,7 @@ export class EventsGateway /* implements OnGatewayConnection, OnGatewayDisconnec
   async commandClearLock(wsId: string, ws: Socket, obj: object): Promise<void> {
     console.log('commandClearLock', obj);
     const lockKey: string = obj['lockKey'];
-    this.logger.log('commandClearLock', wsId, lockKey);
+    InfoLog(`commandClearLock ${wsId} ${lockKey}`);
 
     state.lock(wsId, lockKey);
     console.log('state.listOfLock', wsId, state.listOfLock(wsId));
@@ -406,7 +405,7 @@ export class EventsGateway /* implements OnGatewayConnection, OnGatewayDisconnec
   async commandWatchLock(wsId: string, ws: Socket, obj: object): Promise<void> {
     console.log('commandWatchLock', obj);
     const lockKey: string = obj['lockKey'];
-    this.logger.log('commandWatchLock', wsId, lockKey);
+    InfoLog(`commandWatchLock ${wsId} ${lockKey}`);
 
     try {
       const val: string = await redisServer.getLockKey(lockKey);
@@ -459,7 +458,7 @@ export class EventsGateway /* implements OnGatewayConnection, OnGatewayDisconnec
   ): Promise<void> {
     console.log('commandUnwatchLock', obj);
     const lockKey: string = obj['lockKey'];
-    this.logger.log('commandUnwatchLock', wsId, lockKey);
+    InfoLog(`commandUnwatchLock ${wsId} ${lockKey}`);
 
     try {
       const val: string = await redisServer.getLockKey(lockKey);
@@ -503,7 +502,7 @@ export class EventsGateway /* implements OnGatewayConnection, OnGatewayDisconnec
     console.log('commandUnknown', obj);
     const lockKey: string = obj['lockKey'];
     const command: string = obj['command'];
-    this.logger.log('commandUnknown', wsId, lockKey);
+    InfoLog(`commandUnknown ${wsId} ${lockKey}`);
 
     const responseCode: number = eErrorCode.UNKNOWN_COMMAND;
 
